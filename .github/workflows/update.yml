@@ -15,21 +15,57 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' 
+          python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt 
+        run: pip install -r requirements.txt
 
       - name: Generate new SVG
-        run: python generate_svg.py
+        run: |
+          python generate_svg.py
+          # --- DEBUGGING START ---
+          echo "--- Contents of current directory after SVG generation ---"
+          ls -l
+          echo "--- End of directory listing ---"
+          if [ ! -f tracker.svg ]; then
+            echo "ERROR: tracker.svg was NOT created by generate_svg.py!"
+            exit 1 # Fail the step explicitly if file is missing
+          else
+            echo "SUCCESS: tracker.svg was created. Displaying first few lines:"
+            head tracker.svg
+          fi
+          # --- DEBUGGING END ---
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
-          USERNAME: ${{ vars.USERNAME }} 
+          USERNAME: ${{ vars.USERNAME }}
 
       - name: Commit and Push SVG
         run: |
-          git config user.name "github-actions[bot]" # Official bot user
+          # --- DEBUGGING START ---
+          echo "--- Starting Commit and Push step ---"
+          git status
+          echo "--- End git status ---"
+          # --- DEBUGGING END ---
+          git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add tracker.svg
-          # Only commit if there are changes
-          git diff --quiet --exit-code tracker.svg || (git commit -m "🔄 Update tracker" && git push) || echo "No changes to commit."
+          # We're making this more robust for debugging.
+          # The '|| echo "No changes"' can mask other failures.
+          # Let's explicitly check if there are changes before committing.
+          if git diff --quiet --exit-code tracker.svg; then
+            echo "No actual changes to tracker.svg. Skipping commit."
+          else
+            echo "Changes detected in tracker.svg. Committing..."
+            git commit -m "🔄 Update tracker"
+            if [ $? -ne 0 ]; then
+              echo "ERROR: git commit failed!"
+              exit 1 # Fail if commit fails
+            fi
+            git push
+            if [ $? -ne 0 ]; then
+              echo "ERROR: git push failed!"
+              exit 1 # Fail if push fails
+            fi
+            echo "Successfully committed and pushed tracker.svg."
+          fi
+        # Requires permissions for the GITHUB_TOKEN
