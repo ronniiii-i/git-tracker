@@ -8,6 +8,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # --- ADD THIS PERMISSIONS BLOCK ---
+    permissions:
+      contents: write # Grant write permission for the GITHUB_TOKEN to push files
+    # --- END ADDITION ---
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -43,13 +47,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Add the file to the staging area
           git add tracker.svg
           echo "--- After git add tracker.svg ---"
-          git status # Check status after add
+          git status
 
-          # Check if there are any staged changes at all (not just tracker.svg specifically)
-          # This is more robust as it covers both new files and modifications
           if git diff --staged --quiet; then
             echo "No changes to commit (nothing staged or staged changes are identical to HEAD). Skipping commit."
           else
