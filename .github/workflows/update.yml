@@ -1,4 +1,3 @@
-# git-tracker/.github/workflows/update.yml
 name: Update Tracker SVG
 
 on:
@@ -8,10 +7,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # --- ADD THIS PERMISSIONS BLOCK ---
     permissions:
-      contents: write # Grant write permission for the GITHUB_TOKEN to push files
-    # --- END ADDITION ---
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -19,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
