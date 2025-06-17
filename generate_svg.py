@@ -190,6 +190,10 @@ lines = [
     f"Longest Streak: {longest_streak} days ({longest_streak_range})"
 ]
 
+# Define line height and vertical padding for SVG layout
+line_height = 24  # pixels
+padding_y = 16    # pixels
+
 svg_height = (len(lines) * line_height) + (2 * padding_y)
 # Let's dynamically adjust width based on content length
 max_text_width = 0
