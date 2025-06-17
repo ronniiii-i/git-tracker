@@ -2,8 +2,6 @@ import requests
 import os
 import datetime
 
-# This script assumes environment variables are set by the calling process (e.g., GitHub Actions)
-
 GH_PAT = os.getenv("GH_PAT")
 USERNAME = os.getenv("USERNAME")
 
@@ -14,7 +12,7 @@ if not USERNAME:
     print("Error: USERNAME environment variable not set for SVG generation.")
     exit(1)
 
-# --- GraphQL API Endpoint ---
+
 GRAPHQL_API_URL = "https://api.github.com/graphql"
 
 headers = {
@@ -255,7 +253,7 @@ def generate_themed_svg(theme_name, theme_colors):
 
     # --- Column 2: Current Streak ---
     # Icon and Number - position icon slightly above and to the left of number center
-    icon_size = 40
+    icon_size = 10
     icon_x = center_x_col2 - (icon_size / 2) # Center icon
     icon_y = svg_height / 2 - font_size_label - icon_size/2 - 5 # Position above number and label
     
