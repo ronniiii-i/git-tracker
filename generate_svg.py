@@ -1,7 +1,7 @@
 # git-tracker/generate_svg.py
 import requests
 import os
-import datetime # For date calculations
+import datetime
 
 # This script assumes environment variables are set by the calling process (e.g., GitHub Actions)
 
@@ -26,10 +26,7 @@ headers = {
 
 # --- GraphQL Query ---
 # This query fetches total contributions and daily contribution counts for the past year.
-# To get from "beginning of account", GraphQL has limitations and typically you'd query
-# a specific year or range, or aggregate across multiple years' contribution collections.
-# For simplicity and practicality, this common pattern queries the most recent year's data
-# from the contributions calendar, which is what GitHub displays prominently.
+# The `contributionsCollection` gives data for roughly the last 365 days.
 graphql_query = """
 query {
   user(login: "%s") {
@@ -49,6 +46,8 @@ query {
 """ % USERNAME
 
 # --- Fetch Data from GraphQL API ---
+total_contributions = 0
+daily_contributions = {}
 try:
     res = requests.post(GRAPHQL_API_URL, headers=headers, json={'query': graphql_query})
     res.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
@@ -56,164 +55,207 @@ try:
     
     if 'errors' in data:
         print(f"GraphQL errors: {data['errors']}")
-        exit(1)
-
-    # Extract data
-    user_data = data['data']['user']
-    contribution_calendar = user_data['contributionsCollection']['contributionCalendar']
-    total_contributions = contribution_calendar['totalContributions']
-    weeks = contribution_calendar['weeks']
-
-    # Process daily contributions for streaks
-    daily_contributions = {}
-    for week in weeks:
-        for day in week['contributionDays']:
-            date_obj = datetime.datetime.strptime(day['date'], '%Y-%m-%d').date()
-            daily_contributions[date_obj] = day['contributionCount']
+        # Fallback to 0 if there are errors, don't exit entirely
+        # (This allows the SVG to still be generated, but with 0 values)
+        total_contributions = 0
+        daily_contributions = {}
+    else:
+        # Extract data
+        user_data = data['data']['user']
+        contribution_calendar = user_data['contributionsCollection']['contributionCalendar']
+        total_contributions = contribution_calendar['totalContributions']
+        
+        for week in contribution_calendar['weeks']:
+            for day in week['contributionDays']:
+                date_obj = datetime.datetime.strptime(day['date'], '%Y-%m-%d').date()
+                daily_contributions[date_obj] = day['contributionCount']
 
 except requests.exceptions.RequestException as e:
     print(f"Error fetching GitHub GraphQL data: {e}")
-    exit(1)
-except Exception as e:
-    print(f"Error processing GraphQL response: {e}")
-    exit(1)
+    exit(1) # Exit if we can't even get data
+
+# --- Streak Calculation Functions ---
+
+def calculate_streak_ending_on_date(contributions_data, end_date):
+    """Calculates streak ending *on* the specified end_date (inclusive)."""
+    streak = 0
+    current_date = end_date
+    while contributions_data.get(current_date, 0) > 0:
+        streak += 1
+        current_date -= datetime.timedelta(days=1)
+    return streak
+
+def find_longest_streak(daily_contributions):
+    longest_streak = 0
+    longest_start = None
+    longest_end = None
+
+    # Get all unique dates with contributions, sorted
+    dates_with_contributions = sorted([d for d, c in daily_contributions.items() if c > 0])
+    
+    if not dates_with_contributions:
+        return 0, None, None
+
+    current_streak = 0
+    current_streak_start = None
+
+    for i, date in enumerate(dates_with_contributions):
+        if i == 0:
+            current_streak = 1
+            current_streak_start = date
+        else:
+            prev_date = dates_with_contributions[i-1]
+            # Check if current date is exactly one day after previous
+            if date == prev_date + datetime.timedelta(days=1):
+                current_streak += 1
+            else:
+                # Streak broken, update longest if applicable
+                if current_streak > longest_streak:
+                    longest_streak = current_streak
+                    longest_start = current_streak_start
+                    longest_end = prev_date # End date of the just-completed streak
+                current_streak = 1 # Start new streak
+                current_streak_start = date
+
+    # After loop, check if the last streak was the longest
+    if current_streak > longest_streak:
+        longest_streak = current_streak
+        longest_start = current_streak_start
+        longest_end = dates_with_contributions[-1] # Last date in the list
+
+    return longest_streak, longest_start, longest_end
 
 
 # --- Calculate Streaks ---
 today = datetime.date.today()
-current_streak = 0
-longest_streak = 0
-temp_current_streak = 0
-streak_start_date = None
-longest_streak_start_date = None
-longest_streak_end_date = None
+yesterday = today - datetime.timedelta(days=1)
 
-# Iterate backwards from today to calculate streaks
-# (Going back 365 days from today should cover the data typically returned by contributionCalendar)
-for i in range(366): # Check up to a year back (or more if data allows)
-    check_date = today - datetime.timedelta(days=i)
-    
-    # If it's today and no contribution yet, it doesn't break streak for yesterday
-    # If it's a past date, check if there was a contribution
-    has_contribution = daily_contributions.get(check_date, 0) > 0
+current_streak_calc = 0
+current_streak_start_date = None
+current_streak_end_date = None
 
-    if has_contribution:
-        temp_current_streak += 1
-        if streak_start_date is None: # Only set for the start of the *current* active streak
-            streak_start_date = check_date
+if daily_contributions.get(today, 0) > 0:
+    current_streak_calc = calculate_streak_ending_on_date(daily_contributions, today)
+    current_streak_end_date = today
+    current_streak_start_date = today - datetime.timedelta(days=current_streak_calc - 1)
+elif daily_contributions.get(yesterday, 0) > 0:
+    # If today has no contribution but yesterday did, the "current" streak ended yesterday.
+    current_streak_calc = calculate_streak_ending_on_date(daily_contributions, yesterday)
+    current_streak_end_date = yesterday
+    current_streak_start_date = yesterday - datetime.timedelta(days=current_streak_calc - 1)
+
+
+longest_streak_calc, longest_streak_start, longest_streak_end = find_longest_streak(daily_contributions)
+
+
+# --- Format Dates for Display ---
+current_streak_range_str = "N/A"
+if current_streak_calc > 0 and current_streak_start_date and current_streak_end_date:
+    if current_streak_start_date == current_streak_end_date:
+        current_streak_range_str = f"{current_streak_start_date.strftime('%b %d, %Y')}"
     else:
-        # If today has no contribution, current streak is from yesterday
-        if i == 0 and daily_contributions.get(today, 0) == 0:
-             # If today has no contribution, and yesterday had one, current streak ends yesterday.
-             # This check needs to be precise for "current streak" definition.
-             # If `today` has no contributions, the current streak effectively ended yesterday.
-             # So we only update `current_streak` if it's not today with 0 contributions.
-             pass # Don't update current_streak yet if today is the first 0 day
-        else:
-            # A break in the streak
-            current_streak = max(current_streak, temp_current_streak) # Finalize current streak check
-            if temp_current_streak > longest_streak:
-                longest_streak = temp_current_streak
-                # Calculate start/end dates for longest streak
-                longest_streak_end_date = check_date + datetime.timedelta(days=1) # Day before current check_date
-                longest_streak_start_date = longest_streak_end_date - datetime.timedelta(days=longest_streak - 1)
-            temp_current_streak = 0
-            streak_start_date = None # Reset current streak start
+        current_streak_range_str = f"{current_streak_start_date.strftime('%b %d, %Y')} - {current_streak_end_date.strftime('%b %d, %Y')}"
+elif total_contributions == 0:
+    current_streak_range_str = "No contributions yet"
+else: # Current streak is 0 but there were contributions (broken streak)
+    current_streak_range_str = "No active streak"
 
-# Finalize current streak after loop
-if daily_contributions.get(today, 0) > 0: # Only count today if it has contributions
-    current_streak = max(current_streak, temp_current_streak)
-    if streak_start_date is None and current_streak > 0:
-        streak_start_date = today - datetime.timedelta(days=current_streak -1)
-else: # If today has no contributions, current streak is based on yesterday's count
-    if daily_contributions.get(today - datetime.timedelta(days=1), 0) > 0:
-        # If yesterday had a contribution, current_streak is whatever temp_current_streak was
-        # This can be tricky; let's refine:
-        # The `current_streak` should be from *consecutive days ending yesterday* if today is 0.
-        # The loop logic already captures this correctly.
-        pass # No need to adjust current_streak further here based on today's zero
-
-# If no contributions at all, streaks are 0
-if total_contributions == 0:
-    current_streak = 0
-    longest_streak = 0
-    streak_start_date = None
-    longest_streak_start_date = None
-    longest_streak_end_date = None
-else:
-    # Handle case where the longest streak is the current one
-    if temp_current_streak > longest_streak:
-        longest_streak = temp_current_streak
-        longest_streak_end_date = today
-        longest_streak_start_date = today - datetime.timedelta(days=longest_streak - 1)
-    
-    # If the current streak is 0 because today has no contribution but previous days did,
-    # find the true start of the *current active* streak (which ended yesterday)
-    if current_streak > 0 and streak_start_date is None:
-        # This handles cases where the streak calculation ended due to the loop finishing
-        # but the actual current streak (ending yesterday or earlier) was found.
-        # This part of streak calculation can be complex based on exact definition.
-        # Let's simplify: if current_streak is >0 and start is None, assume it ends today/yesterday.
-        # This is a bit rough, but a full streak algorithm is complex.
-        pass # The loop generally handles this.
-
-
-# Format dates for display
-current_streak_range = "N/A"
-if current_streak > 0 and streak_start_date:
-    end_date_current_streak = today if daily_contributions.get(today, 0) > 0 else today - datetime.timedelta(days=1)
-    if end_date_current_streak < streak_start_date: # Handle edge case where current streak is 1 but yesterday was 0
-        current_streak_range = f"{streak_start_date.strftime('%Y-%m-%d')}"
+longest_streak_range_str = "N/A"
+if longest_streak_calc > 0 and longest_streak_start and longest_streak_end:
+    if longest_streak_start == longest_streak_end:
+        longest_streak_range_str = f"{longest_streak_start.strftime('%b %d, %Y')}"
     else:
-        current_streak_range = f"{streak_start_date.strftime('%Y-%m-%d')} to {end_date_current_streak.strftime('%Y-%m-%d')}"
-elif current_streak == 1 and daily_contributions.get(today, 0) > 0: # Special case for 1 day streak today
-    current_streak_range = today.strftime('%Y-%m-%d')
-elif current_streak == 0 and total_contributions > 0: # If streak is 0 but there are contributions, no current range
-    current_streak_range = "No active streak"
+        longest_streak_range_str = f"{longest_streak_start.strftime('%b %d, %Y')} - {longest_streak_end.strftime('%b %d, %Y')}"
+elif total_contributions == 0:
+    longest_streak_range_str = "No contributions yet"
 
 
-longest_streak_range = "N/A"
-if longest_streak > 0 and longest_streak_start_date and longest_streak_end_date:
-    longest_streak_range = f"{longest_streak_start_date.strftime('%Y-%m-%d')} to {longest_streak_end_date.strftime('%Y-%m-%d')}"
-elif longest_streak == 1 and total_contributions > 0: # Case for a single 1-day contribution
-    # If longest streak is 1, it means there was only one day with contribution.
-    # The start/end dates for this might not be set by the loop in a simple way.
-    # For now, let's just show the count.
-    longest_streak_range = "N/A (single day contribution)"
+# --- SVG Generation Logic (now generating two themes) ---
 
+# Define theme colors
+themes = {
+    "light": {
+        "bg_color": "#FFFFFF",
+        "text_color": "#24292e",
+        "title_color": "#0366d6" # GitHub blue
+    },
+    "dark": {
+        "bg_color": "#0D1117",
+        "text_color": "#C9D1D9",
+        "title_color": "#58a6ff" # GitHub light blue
+    }
+}
 
-# --- Generate SVG ---
-# Adjust content for new statistics
-lines = [
+# Common SVG parameters
+line_height = 24 # Increased for more spacing
+padding_x = 20
+padding_y = 20
+font_size_main = 16
+font_size_sub = 12
+
+# Content lines (prepared once)
+lines_content = [
     f"Total Contributions (last year): {total_contributions}",
-    f"Current Streak: {current_streak} days ({current_streak_range})",
-    f"Longest Streak: {longest_streak} days ({longest_streak_range})"
+    f"Current Streak: {current_streak_calc} days",
+    f"  {current_streak_range_str}",
+    f"Longest Streak: {longest_streak_calc} days",
+    f"  {longest_streak_range_str}"
 ]
 
-# Define line height and vertical padding for SVG layout
-line_height = 24  # pixels
-padding_y = 16    # pixels
+# Calculate dynamic SVG height and width
+num_lines = len(lines_content)
+svg_height = (num_lines * line_height) + (2 * padding_y)
 
-svg_height = (len(lines) * line_height) + (2 * padding_y)
-# Let's dynamically adjust width based on content length
+# Estimate max text width
 max_text_width = 0
-for line in lines:
-    # A very rough estimate, assumes monospace or similar font.
-    # For precise width, you'd need SVG text measurement.
-    max_text_width = max(max_text_width, len(line) * 8) # Approx 8 pixels per character
+for line in lines_content:
+    # This is a very rough estimate; for precise width, SVG text measurement is needed
+    max_text_width = max(max_text_width, len(line) * 8) # Approx 8px per character
 
-svg_width = max(300, max_text_width + 20) # Ensure minimum width and add padding
+svg_width = max(350, max_text_width + (2 * padding_x)) # Ensure minimum width and add padding
 
-svg = f"<svg xmlns='http://www.w3.org/2000/svg' width='{svg_width}' height='{svg_height}'>"
-svg += "<style>text { font-family: sans-serif; fill: #24292e; }</style>"
+# Function to generate SVG for a specific theme
+def generate_themed_svg(theme_name, theme_colors, lines):
+    svg = f"<svg xmlns='http://www.w3.org/2000/svg' width='{svg_width}' height='{svg_height}'>"
+    svg += f"<rect x='0' y='0' width='{svg_width}' height='{svg_height}' fill='{theme_colors['bg_color']}' rx='10'/>" # Rounded corners
 
-y = padding_y + (line_height / 2)
-for line in lines:
-    svg += f"<text x='10' y='{y}' font-size='14'>{line}</text>"
-    y += line_height
-svg += "</svg>"
+    svg += "<style>"
+    svg += f"text {{ font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif,Apple Color Emoji,Segoe UI Emoji; fill: {theme_colors['text_color']}; }}"
+    svg += "</style>"
 
-with open("tracker.svg", "w") as f:
-    f.write(svg)
+    y_pos = padding_y + font_size_main # Starting Y position for first text element
+    
+    # Title/Header (optional, can be added here if desired)
+    # svg += f"<text x='{padding_x}' y='{y_pos}' font-size='{font_size_main + 2}' font-weight='bold' fill='{theme_colors['title_color']}'>GitHub Activity Summary</text>"
+    # y_pos += line_height * 1.5 # Extra space after title
 
-print("tracker.svg generated successfully with contribution statistics.")
+    for i, line in enumerate(lines):
+        current_y = y_pos + (i * line_height)
+        font_size = font_size_main
+        fill_color = theme_colors['text_color']
+        
+        # Apply special styling for date ranges (lines that start with '  ')
+        if line.strip().startswith('  '): # Using strip for robustness
+            font_size = font_size_sub
+            current_y -= (line_height - font_size_sub) / 2 # Adjust y for smaller font
+            fill_color = theme_colors['text_color'] # Can make this a lighter shade if desired
+        
+        # Apply special styling for main stats (first line of each section)
+        elif i == 0 or line.startswith("Current Streak") or line.startswith("Longest Streak"):
+            font_size = font_size_main
+            # fill_color = theme_colors['title_color'] # Optionally highlight main stats
+
+
+        svg += f"<text x='{padding_x}' y='{current_y}' font-size='{font_size}' fill='{fill_color}'>{line.strip()}</text>"
+
+
+    svg += "</svg>"
+    return svg
+
+# Generate and save SVGs for each theme
+for theme_name, theme_colors in themes.items():
+    svg_content = generate_themed_svg(theme_name, theme_colors, lines_content)
+    file_name = f"tracker-{theme_name}.svg"
+    with open(file_name, "w") as f:
+        f.write(svg_content)
+    print(f"{file_name} generated successfully.")
