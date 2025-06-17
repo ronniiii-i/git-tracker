@@ -1,0 +1,36 @@
+# git-tracker/.github/workflows/update.yml
+name: Update Tracker SVG
+
+on:
+  repository_dispatch:
+    types: [update-tracker] # This type needs to match what the webhook dispatches
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11' # Ensure this matches your local development version if needed
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt # Now this file exists and will install PyGithub and requests
+
+      - name: Generate new SVG
+        run: python generate_svg.py
+        env:
+          # Pass required environment variables to generate_svg.py
+          GH_PAT: ${{ secrets.GH_PAT }}
+          USERNAME: ${{ vars.USERNAME }} # Assuming you'll set this as a repository variable
+
+      - name: Commit and Push SVG
+        run: |
+          git config user.name "github-actions[bot]" # Official bot user
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add tracker.svg
+          # Only commit if there are changes
+          git diff --quiet --exit-code tracker.svg || (git commit -m "🔄 Update tracker" && git push) || echo "No changes to commit."
