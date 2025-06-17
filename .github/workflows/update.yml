@@ -3,7 +3,7 @@ name: Update Tracker SVG
 
 on:
   repository_dispatch:
-    types: [update-tracker] # This type needs to match what the webhook dispatches
+    types: [update-tracker]
 
 jobs:
   build:
@@ -15,17 +15,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' # Ensure this matches your local development version if needed
+          python-version: '3.11' 
 
       - name: Install dependencies
-        run: pip install -r requirements.txt # Now this file exists and will install PyGithub and requests
+        run: pip install -r requirements.txt 
 
       - name: Generate new SVG
         run: python generate_svg.py
         env:
-          # Pass required environment variables to generate_svg.py
           GH_PAT: ${{ secrets.GH_PAT }}
-          USERNAME: ${{ vars.USERNAME }} # Assuming you'll set this as a repository variable
+          USERNAME: ${{ vars.USERNAME }} 
 
       - name: Commit and Push SVG
         run: |
