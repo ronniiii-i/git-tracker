@@ -23,49 +23,46 @@ jobs:
       - name: Generate new SVG
         run: |
           python generate_svg.py
-          # --- DEBUGGING START ---
           echo "--- Contents of current directory after SVG generation ---"
           ls -l
           echo "--- End of directory listing ---"
           if [ ! -f tracker.svg ]; then
             echo "ERROR: tracker.svg was NOT created by generate_svg.py!"
-            exit 1 # Fail the step explicitly if file is missing
+            exit 1
           else
             echo "SUCCESS: tracker.svg was created. Displaying first few lines:"
             head tracker.svg
           fi
-          # --- DEBUGGING END ---
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           USERNAME: ${{ vars.USERNAME }}
 
       - name: Commit and Push SVG
         run: |
-          # --- DEBUGGING START ---
           echo "--- Starting Commit and Push step ---"
-          git status
-          echo "--- End git status ---"
-          # --- DEBUGGING END ---
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Add the file to the staging area
           git add tracker.svg
-          # We're making this more robust for debugging.
-          # The '|| echo "No changes"' can mask other failures.
-          # Let's explicitly check if there are changes before committing.
-          if git diff --quiet --exit-code tracker.svg; then
-            echo "No actual changes to tracker.svg. Skipping commit."
+          echo "--- After git add tracker.svg ---"
+          git status # Check status after add
+
+          # Check if there are any staged changes at all (not just tracker.svg specifically)
+          # This is more robust as it covers both new files and modifications
+          if git diff --staged --quiet; then
+            echo "No changes to commit (nothing staged or staged changes are identical to HEAD). Skipping commit."
           else
-            echo "Changes detected in tracker.svg. Committing..."
+            echo "Changes are staged. Committing..."
             git commit -m "🔄 Update tracker"
             if [ $? -ne 0 ]; then
               echo "ERROR: git commit failed!"
-              exit 1 # Fail if commit fails
+              exit 1
             fi
             git push
             if [ $? -ne 0 ]; then
               echo "ERROR: git push failed!"
-              exit 1 # Fail if push fails
+              exit 1
             fi
             echo "Successfully committed and pushed tracker.svg."
           fi
-        # Requires permissions for the GITHUB_TOKEN
