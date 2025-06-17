@@ -16,43 +16,47 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Generate new SVG
+      - name: Generate new SVGs (Light and Dark themes)
         run: |
           python generate_svg.py
+          # --- DEBUGGING START ---
           echo "--- Contents of current directory after SVG generation ---"
-          ls -l
+          ls -l tracker-light.svg tracker-dark.svg # Specifically list the SVG files
           echo "--- End of directory listing ---"
-          if [ ! -f tracker.svg ]; then
-            echo "ERROR: tracker.svg was NOT created by generate_svg.py!"
-            exit 1
+          if [ ! -f tracker-light.svg ] || [ ! -f tracker-dark.svg ]; then
+            echo "ERROR: One or both SVG files were NOT created by generate_svg.py!"
+            exit 1 # Fail the step explicitly if files are missing
           else
-            echo "SUCCESS: tracker.svg was created. Displaying first few lines:"
-            head tracker.svg
+            echo "SUCCESS: Both SVG files were created. Displaying first few lines of light theme:"
+            head tracker-light.svg
           fi
+          # --- DEBUGGING END ---
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           USERNAME: ${{ vars.USERNAME }}
 
-      - name: Commit and Push SVG
+      - name: Commit and Push SVGs
         run: |
           echo "--- Starting Commit and Push step ---"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add tracker.svg
-          echo "--- After git add tracker.svg ---"
-          git status
+          # Add both SVG files to the staging area
+          git add tracker-light.svg tracker-dark.svg
+          echo "--- After git add ---"
+          git status # Check status after add
 
+          # Check if there are any staged changes
           if git diff --staged --quiet; then
             echo "No changes to commit (nothing staged or staged changes are identical to HEAD). Skipping commit."
           else
             echo "Changes are staged. Committing..."
-            git commit -m "🔄 Update tracker"
+            git commit -m "🔄 Update tracker SVGs" # Changed commit message
             if [ $? -ne 0 ]; then
               echo "ERROR: git commit failed!"
               exit 1
@@ -62,5 +66,5 @@ jobs:
               echo "ERROR: git push failed!"
               exit 1
             fi
-            echo "Successfully committed and pushed tracker.svg."
+            echo "Successfully committed and pushed tracker SVGs."
           fi
