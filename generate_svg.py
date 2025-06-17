@@ -1,4 +1,3 @@
-# git-tracker/generate_svg.py
 import requests
 import os
 import datetime
